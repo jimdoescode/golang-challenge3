@@ -1,11 +1,15 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"image"
 	"image/draw"
 	"image/png"
 	"log"
+	"math"
 	"os"
+
 	// Packages image/gif and image/jpeg are not used explicitly in the code
 	// below, but are imported for their initialization side-effect, which
 	// allows image.Decode to understand GIF and JPEG formatted images.
@@ -14,15 +18,17 @@ import (
 )
 
 type ImageTile struct {
-	Image        image.Image
+	Image        *image.Image
 	AverageColor LCH
 }
 
 type ImageBlock struct {
-	Image  image.Image
+	Image  *image.Image
 	Bounds image.Rectangle
 }
 
+// Scans a directory and loads tile images from that directory. If the images
+// don't match the specified tile dimensions then the image is scaled to fit.
 func getTiles(dir *os.File, tw, th int) ([]ImageTile, error) {
 
 	files, err := dir.Readdir(0)
@@ -57,9 +63,9 @@ func getTiles(dir *os.File, tw, th int) ([]ImageTile, error) {
 				i = ScaleImage(i, tw, th)
 			}
 
-			c := LCHModel.Convert(ScaleImage(i, 1, 1).At(0, 0)).(LCH)
+			c := AverageImageColor(i)
 
-			itchan <- &ImageTile{i, c}
+			itchan <- &ImageTile{&i, c}
 
 		}(file, dir.Name())
 	}
@@ -74,15 +80,16 @@ func getTiles(dir *os.File, tw, th int) ([]ImageTile, error) {
 	return tiles, nil
 }
 
-func getBlocks(i image.Image, ibx int, iby int, tiles []ImageTile) []ImageBlock {
+// Breaks a source image up into blocks of the specified size. It then
+// averages the colors of that image block and searches the ImageTile
+// slice for an ImageTile that is the closest to the average block color.
+func getBlocks(i image.Image, bw, bh int, tiles []ImageTile) []ImageBlock {
 
-	bct := ibx * iby
 	ib := i.Bounds()
-	bw := ib.Dx() / ibx
-	bh := ib.Dy() / iby
+	bct := int(math.Ceil(float64(ib.Dx())/float64(bw)) * math.Ceil(float64(ib.Dy())/float64(bh)))
 
 	blocks := make([]ImageBlock, 0, bct)
-	bchan := make(chan ImageBlock)
+	bchan := make(chan ImageBlock, bct)
 
 	for by := ib.Min.Y; by < ib.Max.Y; by += bh {
 		for bx := ib.Min.X; bx < ib.Max.X; bx += bw {
@@ -91,7 +98,7 @@ func getBlocks(i image.Image, ibx int, iby int, tiles []ImageTile) []ImageBlock 
 				sub := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
 				draw.Draw(sub, sub.Bounds(), i, b.Min, draw.Src)
 
-				c := LCHModel.Convert(ScaleImage(sub, 1, 1).At(0, 0)).(LCH)
+				c := AverageImageColor(sub)
 				best := tiles[0]
 
 				for _, tile := range tiles {
@@ -127,13 +134,23 @@ func writeImage(name string, m image.Image) error {
 
 func main() {
 
-	if len(os.Args) != 3 {
-		log.Fatalf("Usage: %s <src> <tile dir>", os.Args[0])
+	var tw, th int
+
+	flag.IntVar(&tw, "w", 60, "The width of mosaic tiles")
+	flag.IntVar(&th, "h", 60, "The height of mosaic tiles")
+	flag.Parse()
+
+	if flag.NArg() != 2 {
+		fmt.Fprintf(os.Stderr, "Usage: %s <src> <dir>\n", os.Args[0])
+		flag.PrintDefaults()
+		return
 	}
 
-	tx, ty := 20, 20 //desired tile count along the x and y of the image
+	if tw < 1 || th < 1 {
+		log.Fatal("Invalid tile dimensions specified.")
+	}
 
-	file, err := os.Open(os.Args[1])
+	file, err := os.Open(flag.Arg(0))
 	if err != nil {
 		log.Fatal("Could not open src image!")
 	}
@@ -144,7 +161,7 @@ func main() {
 		log.Fatal("Could not decode source image!")
 	}
 
-	dir, err := os.Open(os.Args[2])
+	dir, err := os.Open(flag.Arg(1))
 	if err != nil {
 		log.Fatal("Could not open tile directory!")
 	}
@@ -155,17 +172,17 @@ func main() {
 		log.Fatal("Tile directory is not a directory!")
 	}
 
-	tiles, err := getTiles(dir, src.Bounds().Dx()/tx, src.Bounds().Dy()/ty)
+	tiles, err := getTiles(dir, tw, th)
 	if err != nil || len(tiles) == 0 {
 		log.Fatal("Could not load tile images!")
 	}
 
-	blocks := getBlocks(src, tx, ty, tiles)
+	blocks := getBlocks(src, tw, th, tiles)
 
 	dst := image.NewRGBA(src.Bounds())
 
 	for _, block := range blocks {
-		draw.Draw(dst, block.Bounds, block.Image, image.ZP, draw.Src)
+		draw.Draw(dst, block.Bounds, *block.Image, image.ZP, draw.Src)
 	}
 
 	err = writeImage("mosaic.png", dst)

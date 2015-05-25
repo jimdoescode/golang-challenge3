@@ -131,6 +131,8 @@ func (lch LCH) RGBA() (uint32, uint32, uint32, uint32) {
 	return luv.RGBA()
 }
 
+// Computes the Deta E (color distance) of two colors
+// http://en.wikipedia.org/wiki/Color_difference#CIEDE2000
 func (lch1 LCH) Distance(lch2 LCH) float64 {
 
 	hd := lch2.H - lch1.H
