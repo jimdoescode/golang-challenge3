@@ -12,9 +12,7 @@ const Yn = 1.0
 const MAX_UINT32 = 65535
 
 func clampUint(v uint32) uint32 {
-	if v < 0 {
-		v = 0
-	} else if v > MAX_UINT32 {
+	if v > MAX_UINT32 {
 		v = MAX_UINT32
 	}
 
